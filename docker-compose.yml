@@ -42,6 +42,7 @@ services:
       PGDATA: /var/lib/postgresql/data
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: toite
     command:
       - "postgres"
       - "-c"
@@ -107,29 +108,49 @@ services:
     networks:
       - internal
 
+  # "Internal" meaning panel which are used by admin/managers/etc. , not for public users
+  internal-frontend:
+    image: toite/internal-frontend:latest
+    container_name: toite-internal-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: "production"
+      PORT: 3000
+    depends_on:
+      backend:
+        condition: service_started
+    networks:
+      - internal
+
   # Running the backend
   backend:
     image: toite/backend:latest
     container_name: toite-backend
     restart: unless-stopped
     ports:
-      - "${PORT:-3000}:3000"
+      - "4000:4000"
     environment:
-      MONGO_URL: mongodb://toite:${MONGO_PASSWORD}@mongo:27017/toite?authSource=admin
-      POSTGRESQL_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/toite
-      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
-      S3_ENDPOINT: http://minio:9000
-      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-minioadmin}
-      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-minioadmin}
-      S3_BUCKET_NAME: ${S3_BUCKET_NAME:-toite}
-      S3_REGION: ${S3_REGION:-us-east-1}
+      # for /docs we need to use development environment
+      # TODO: create env for enabling /docs
+      NODE_ENV: "development" 
+      PORT: 4000
+      MONGO_URL: "mongodb://toite:${MONGO_PASSWORD}@mongo:27017/toite?authSource=admin"
+      POSTGRESQL_URL: "postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/toite"
+      REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379"
+      S3_ENDPOINT: "http://minio:9000"
+      S3_ACCESS_KEY_ID: "${S3_ACCESS_KEY_ID:-minioadmin}"
+      S3_SECRET_ACCESS_KEY: "${S3_SECRET_ACCESS_KEY:-minioadmin}"
+      S3_BUCKET_NAME: "${S3_BUCKET_NAME:-toite}"
+      S3_REGION: "${S3_REGION:-us-east-1}"
     env_file:
       - .env
     depends_on:
       mongo:
         condition: service_healthy
       postgres:
-        condition: service_started
+        condition: service_healthy
       redis:
         condition: service_started
     networks:
