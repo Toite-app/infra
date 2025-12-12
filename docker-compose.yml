@@ -1,6 +1,39 @@
 name: toite
 
 services:
+  # Traefik reverse proxy
+  traefik:
+    image: traefik:v3.2
+    container_name: toite-traefik
+    restart: unless-stopped
+    command:
+      # API and Dashboard
+      - "--api.dashboard=true"
+      - "--api.insecure=true"
+      # Docker provider
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=toite_internal"
+      # Entrypoints
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      # HTTP to HTTPS redirect
+      - "--entrypoints.web.http.redirections.entryPoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entryPoint.scheme=https"
+      # Let's Encrypt
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
+      - "--certificatesresolvers.letsencrypt.acme.email=${LETSENCRYPT_EMAIL:-admin@localhost}"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080" # Dashboard
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - letsencrypt-data:/letsencrypt
+    networks:
+      - internal
+
   # Running mongo database
   mongo:
     image: mongo:7.0
@@ -113,8 +146,6 @@ services:
     image: toite/internal-frontend:latest
     container_name: toite-internal-frontend
     restart: unless-stopped
-    ports:
-      - "3000:3000"
     environment:
       NODE_ENV: "production"
       PORT: 3000
@@ -123,6 +154,16 @@ services:
         condition: service_started
     networks:
       - internal
+    labels:
+      - "traefik.enable=true"
+      # HTTPS Router
+      - "traefik.http.routers.frontend-secure.rule=Host(`${DOMAIN:-localhost}`)"
+      - "traefik.http.routers.frontend-secure.entrypoints=websecure"
+      - "traefik.http.routers.frontend-secure.priority=1"
+      - "traefik.http.routers.frontend-secure.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.frontend-secure.service=frontend"
+      # Service definition
+      - "traefik.http.services.frontend.loadbalancer.server.port=3000"
 
   # Database migrations - runs before backend
   migrations:
@@ -141,8 +182,6 @@ services:
     image: toite/backend:latest
     container_name: toite-backend
     restart: unless-stopped
-    ports:
-      - "4000:4000"
     environment:
       # for /docs we need to use development environment
       # TODO: create env for enabling /docs
@@ -169,6 +208,19 @@ services:
         condition: service_completed_successfully
     networks:
       - internal
+    labels:
+      - "traefik.enable=true"
+      # HTTPS Router
+      - "traefik.http.routers.backend-secure.rule=Host(`${DOMAIN:-localhost}`) && PathPrefix(`/api`)"
+      - "traefik.http.routers.backend-secure.entrypoints=websecure"
+      - "traefik.http.routers.backend-secure.priority=10"
+      - "traefik.http.routers.backend-secure.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.backend-secure.middlewares=strip-api"
+      - "traefik.http.routers.backend-secure.service=backend"
+      # Middleware to strip /api prefix
+      - "traefik.http.middlewares.strip-api.stripprefix.prefixes=/api"
+      # Service definition
+      - "traefik.http.services.backend.loadbalancer.server.port=4000"
 
 volumes:
   mongo-data:
@@ -176,6 +228,7 @@ volumes:
   postgres-certs:
   redis-data:
   minio-data:
+  letsencrypt-data:
 
 networks:
   internal:
