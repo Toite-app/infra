@@ -1,110 +1,53 @@
 #!/bin/bash
-
-# PostgreSQL SSL Certificate Generator (Container Version)
-# Generates CA and server certificates for PostgreSQL SSL connections
-# Runs as postgres user (UID 999) - no root required
-# Idempotent: skips generation if certificates already exist
-
 set -e
 
-CERTS_DIR="/certs"
-VALIDITY_DAYS=1825  # 5 years
+# SSL cert generator for postgres container
+OUT_DIR="/certs"
+EXPIRE_DAYS=365
 
-# CA files
-CA_KEY="$CERTS_DIR/ca.key"
-CA_CERT="$CERTS_DIR/ca.crt"
+ca_key="$OUT_DIR/ca.key"
+ca_crt="$OUT_DIR/ca.crt"
+srv_key="$OUT_DIR/server.key"
+srv_crt="$OUT_DIR/server.crt"
 
-# Server files
-SERVER_KEY="$CERTS_DIR/server.key"
-SERVER_CERT="$CERTS_DIR/server.crt"
-SERVER_CSR="$CERTS_DIR/server.csr"
+fix_perms() {
+    chown 999:999 "$ca_key" "$ca_crt" "$srv_key" "$srv_crt" 2>/dev/null || true
+    chmod 600 "$ca_key" "$srv_key"
+    chmod 644 "$ca_crt" "$srv_crt"
+}
 
-echo "PostgreSQL SSL Certificate Generator"
-echo "======================================"
+gen_ca() {
+    openssl genrsa -out "$ca_key" 4096 2>/dev/null
+    openssl req -new -x509 -days "$EXPIRE_DAYS" -nodes \
+        -key "$ca_key" -out "$ca_crt" \
+        -subj "/CN=Toite CA/O=Toite/C=EE" 2>/dev/null
+}
 
-# Check if certificates already exist
-if [ -f "$SERVER_KEY" ] && [ -f "$SERVER_CERT" ] && [ -f "$CA_CERT" ]; then
-    echo "Certificates already exist, ensuring proper permissions..."
-    chown 999:999 "$CA_KEY" "$CA_CERT" "$SERVER_KEY" "$SERVER_CERT" 2>/dev/null || true
-    chmod 600 "$CA_KEY" 2>/dev/null || true
-    chmod 600 "$SERVER_KEY"
-    chmod 644 "$CA_CERT"
-    chmod 644 "$SERVER_CERT"
-    echo "  CA cert:     $CA_CERT"
-    echo "  Server cert: $SERVER_CERT"
-    echo "  Server key:  $SERVER_KEY"
-    echo "Permissions verified."
-    exit 0
-fi
+gen_server() {
+    local csr="$OUT_DIR/server.csr"
+    openssl genrsa -out "$srv_key" 4096 2>/dev/null
+    openssl req -new -key "$srv_key" -out "$csr" \
+        -subj "/CN=toite-postgres/O=Toite/C=EE" 2>/dev/null
+    openssl x509 -req -days "$EXPIRE_DAYS" \
+        -in "$csr" -CA "$ca_crt" -CAkey "$ca_key" \
+        -CAcreateserial -out "$srv_crt" 2>/dev/null
+    rm -f "$csr" "$OUT_DIR/ca.srl"
+}
 
-echo "Generating SSL certificates..."
+main() {
+    # skip if already generated
+    if [ -f "$srv_key" ] && [ -f "$srv_crt" ] && [ -f "$ca_crt" ]; then
+        fix_perms
+        echo "Certs exist: $OUT_DIR"
+        exit 0
+    fi
 
-# Create certs directory if it doesn't exist
-mkdir -p "$CERTS_DIR"
+    mkdir -p "$OUT_DIR"
+    echo "Generating SSL certs..."
+    gen_ca
+    gen_server
+    fix_perms
+    echo "Certs ready: $OUT_DIR"
+}
 
-# Step 1: Generate CA private key
-echo "Generating CA private key..."
-openssl genrsa -out "$CA_KEY" 4096
-
-# Step 2: Generate CA certificate
-echo "Generating CA certificate..."
-openssl req -new -x509 -days $VALIDITY_DAYS -nodes \
-    -key "$CA_KEY" \
-    -out "$CA_CERT" \
-    -subj "/CN=Toite CA/O=Toite/C=EE"
-
-# Step 3: Generate server private key
-echo "Generating server private key..."
-openssl genrsa -out "$SERVER_KEY" 4096
-
-# Step 4: Generate server certificate signing request
-echo "Generating server CSR..."
-openssl req -new \
-    -key "$SERVER_KEY" \
-    -out "$SERVER_CSR" \
-    -subj "/CN=toite-postgres/O=Toite/C=EE"
-
-# Step 5: Sign server certificate with CA
-echo "Signing server certificate with CA..."
-openssl x509 -req -days $VALIDITY_DAYS \
-    -in "$SERVER_CSR" \
-    -CA "$CA_CERT" \
-    -CAkey "$CA_KEY" \
-    -CAcreateserial \
-    -out "$SERVER_CERT"
-
-# Step 6: Set proper ownership and permissions
-# Owner: postgres user (UID 999)
-# Keys: 600 (read/write for owner only)
-# Certificates: 644 (readable by all)
-echo "Setting ownership and permissions..."
-chown 999:999 "$CA_KEY" "$CA_CERT" "$SERVER_KEY" "$SERVER_CERT"
-chmod 600 "$CA_KEY"
-chmod 600 "$SERVER_KEY"
-chmod 644 "$CA_CERT"
-chmod 644 "$SERVER_CERT"
-
-# Clean up CSR (not needed after signing)
-rm -f "$SERVER_CSR"
-rm -f "$CERTS_DIR/ca.srl"
-
-# Verify the certificates
-echo ""
-echo "Verifying certificates..."
-echo "CA Certificate:"
-openssl x509 -in "$CA_CERT" -noout -subject -dates
-echo ""
-echo "Server Certificate:"
-openssl x509 -in "$SERVER_CERT" -noout -subject -dates
-
-echo ""
-echo "======================================"
-echo "SSL certificates generated successfully!"
-echo "  CA key:      $CA_KEY"
-echo "  CA cert:     $CA_CERT"
-echo "  Server key:  $SERVER_KEY"
-echo "  Server cert: $SERVER_CERT"
-echo "  Validity:    $VALIDITY_DAYS days (5 years)"
-echo "======================================"
-
-exit 0
+main
