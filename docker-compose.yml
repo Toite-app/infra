@@ -124,6 +124,18 @@ services:
     networks:
       - internal
 
+  # Database migrations - runs before backend
+  migrations:
+    image: toite/backend-migrations:latest
+    container_name: toite-migrations
+    environment:
+      POSTGRESQL_URL: "postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/toite"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+
   # Running the backend
   backend:
     image: toite/backend:latest
@@ -153,6 +165,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+      migrations:
+        condition: service_completed_successfully
     networks:
       - internal
 
