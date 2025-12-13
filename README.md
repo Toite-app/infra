@@ -29,3 +29,83 @@ Follow the [VPS Setup Guide](SETUP_VPS.md) to provision and secure your server. 
 - Installing rootless Docker
 - Configuring firewall and automatic security updates
 
+### 2. Configure GitHub Environment
+
+Before deploying via CI/CD, you need to configure GitHub environments with the required secrets and variables.
+
+1. Go to your repository **Settings > Environments**
+2. Create an environment (e.g., `production`, `dev`, or `demo`)
+3. Add the following configuration:
+
+**Secrets** (per environment):
+
+| Secret | Description |
+|--------|-------------|
+| `VPS_HOST` | VPS IP address or hostname |
+| `VPS_PORT` | SSH port number (e.g., `22` or custom) |
+| `VPS_SSH_PRIVATE_KEY` | SSH private key for the `deploy` user |
+| `LETSENCRYPT_EMAIL` | Email for Let's Encrypt certificate notifications |
+
+**Variables** (per environment):
+
+| Variable | Description |
+|----------|-------------|
+| `DOMAIN` | Domain name for the deployment (e.g., `demo.toite.ee`) |
+
+### 3. Deploy via GitHub Actions
+
+The deployment is triggered manually via the **Deploy Infrastructure** workflow:
+
+1. Go to **Actions > Deploy Infrastructure**
+2. Click **Run workflow**
+3. Select the target environment from the dropdown
+4. Click **Run workflow** to start deployment
+
+**What the deployment does:**
+
+1. Validates all required secrets and variables are configured
+2. Connects to the VPS via SSH as the `deploy` user
+3. Checks that `~/app` doesn't already exist (fails if it does)
+4. Verifies Docker is installed and running
+5. Uploads files via rsync (excludes `.git`, `.github`, `docs`, `.env`)
+6. Generates `.env` file with random passwords and secrets
+7. Sets `DOMAIN` and `LETSENCRYPT_EMAIL` from GitHub configuration
+8. Pulls all Docker images
+9. Starts all services with `docker compose up -d`
+
+After successful deployment, you can view the status in the **Deployments** section of the repository.
+
+> **Note:** This workflow is for initial deployment only. If `~/app` already exists on the VPS, you must remove it manually before redeploying.
+
+### 4. Manual Deployment (without CI/CD)
+
+If you prefer to deploy manually without GitHub Actions:
+
+```bash
+# 1. Copy files to VPS (from local machine)
+rsync -avz --exclude='.git' --exclude='.github' --exclude='docs' --exclude='.env' \
+  ./ deploy@YOUR_VPS_HOST:~/app/
+
+# 2. SSH into VPS
+ssh deploy@YOUR_VPS_HOST
+
+# 3. Generate environment file
+cd ~/app
+chmod +x setup-env.sh
+./setup-env.sh
+
+# 4. Edit .env with your domain and email
+nano .env
+# Set DOMAIN=your-domain.com
+# Set LETSENCRYPT_EMAIL=your-email@example.com
+
+# 5. Pull Docker images
+docker compose pull
+
+# 6. Start all services
+docker compose up -d
+
+# 7. Verify services are running
+docker compose ps
+```
+
