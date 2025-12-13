@@ -6,6 +6,33 @@ ENV_FILE="$SCRIPT_DIR/.env"
 EXAMPLE_ENV_FILE="$SCRIPT_DIR/.example.env"
 
 # =============================================================================
+# Argument Parsing
+# =============================================================================
+
+FORCE=false
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -f|--force)
+            FORCE=true
+            shift
+            ;;
+        -h|--help)
+            echo "Usage: $0 [OPTIONS]"
+            echo ""
+            echo "Options:"
+            echo "  -f, --force    Skip confirmation prompt if .env exists"
+            echo "  -h, --help     Show this help message"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1"
+            echo "Use --help for usage information"
+            exit 1
+            ;;
+    esac
+done
+
+# =============================================================================
 # Generator Functions
 # =============================================================================
 
@@ -50,11 +77,15 @@ fi
 
 # Check if .env already exists
 if [[ -f "$ENV_FILE" ]]; then
-    echo "Warning: .env file already exists at $ENV_FILE"
-    read -rp "Do you want to overwrite it? (y/N): " confirm
-    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
-        echo "Aborted."
-        exit 0
+    if [[ "$FORCE" == true ]]; then
+        echo "Warning: .env file already exists at $ENV_FILE (overwriting due to --force)"
+    else
+        echo "Warning: .env file already exists at $ENV_FILE"
+        read -rp "Do you want to overwrite it? (y/N): " confirm
+        if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+            echo "Aborted."
+            exit 0
+        fi
     fi
     echo
 fi
