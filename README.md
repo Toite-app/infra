@@ -89,7 +89,25 @@ After successful deployment, you can view the status in the **Deployments** sect
 
 > **Note:** This workflow is for initial deployment only. If `~/app` already exists on the VPS, you must remove it manually before redeploying.
 
-### 4. Manual Deployment (without CI/CD)
+### 4. Update Running Services
+
+After initial deployment, use the **Pull & Restart Infrastructure** workflow to update application containers with new images:
+
+1. Go to **Actions > Pull & Restart Infrastructure**
+2. Click **Run workflow**
+3. Select the target environment from the dropdown
+4. Click **Run workflow** to start the update
+
+**What the update does:**
+
+1. Connects to the VPS via SSH
+2. Pulls latest images for: `backend`, `migrations`, `internal-frontend`
+3. Recreates those containers with `--force-recreate`
+4. Cleans up unused Docker images
+
+> **Note:** This workflow only updates application services. Infrastructure services (Traefik, PostgreSQL, MongoDB, Redis, MinIO) are not affected. The `.env` file and data volumes are preserved.
+
+### 5. Manual Deployment (without CI/CD)
 
 If you prefer to deploy manually without GitHub Actions:
 
