@@ -166,13 +166,13 @@ jobs:
         run: |
           set -e
           
-          echo "=== Pulling Docker images ==="
+          echo "=== Pulling Docker images for backend, migrations, and internal-frontend ==="
           
           ssh $SSH_OPTS deploy@$VPS_HOST << 'SCRIPT'
             set -e
             cd ~/app
             
-            docker compose pull
+            docker compose pull backend migrations internal-frontend
           SCRIPT
           
           echo "=== Docker images pulled ==="
@@ -183,13 +183,13 @@ jobs:
         run: |
           set -e
           
-          echo "=== Recreating containers ==="
+          echo "=== Recreating backend, migrations, and internal-frontend containers ==="
           
           ssh $SSH_OPTS deploy@$VPS_HOST << 'SCRIPT'
             set -e
             cd ~/app
             
-            docker compose up -d --force-recreate
+            docker compose up -d --force-recreate backend migrations internal-frontend
             
             # Wait for services to start
             sleep 5
