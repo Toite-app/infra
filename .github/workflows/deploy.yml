@@ -1,0 +1,285 @@
+# VPS Deployment Pipeline
+#
+# This workflow deploys the infrastructure to a VPS configured per SETUP_VPS.md
+# It is triggered manually via workflow_dispatch with environment selection
+#
+# Required GitHub Configuration (per environment):
+#   Secrets:
+#     - VPS_SSH_PRIVATE_KEY: SSH private key for deploy user
+#     - VPS_HOST: VPS IP address or hostname
+#     - VPS_PORT: SSH port number
+#     - LETSENCRYPT_EMAIL: Email for Let's Encrypt notifications
+#   Variables:
+#     - DOMAIN: Domain name for the deployment
+
+name: Deploy Infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        type: choice
+        options:
+          - production
+          - dev
+          - demo
+
+# Minimal permissions - only read access to repository contents
+permissions:
+  contents: read
+
+# Prevent simultaneous deployments to the same environment
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+
+    environment:
+      name: ${{ inputs.environment }}
+      url: https://${{ vars.DOMAIN }}
+
+    env:
+      SSH_OPTS: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p ${{ secrets.VPS_PORT }}"
+
+    steps:
+      - name: Validate required secrets and variables
+        run: |
+          set -e
+          
+          echo "=== Validating required configuration ==="
+          
+          MISSING=""
+          
+          # Check secrets (we can only check if they're empty, not if they exist)
+          if [[ -z "${{ secrets.VPS_HOST }}" ]]; then
+            MISSING="${MISSING}  - VPS_HOST (secret)\n"
+          fi
+          
+          if [[ -z "${{ secrets.VPS_PORT }}" ]]; then
+            MISSING="${MISSING}  - VPS_PORT (secret)\n"
+          fi
+          
+          if [[ -z "${{ secrets.VPS_SSH_PRIVATE_KEY }}" ]]; then
+            MISSING="${MISSING}  - VPS_SSH_PRIVATE_KEY (secret)\n"
+          fi
+          
+          if [[ -z "${{ secrets.LETSENCRYPT_EMAIL }}" ]]; then
+            MISSING="${MISSING}  - LETSENCRYPT_EMAIL (secret)\n"
+          fi
+          
+          # Check variables
+          if [[ -z "${{ vars.DOMAIN }}" ]]; then
+            MISSING="${MISSING}  - DOMAIN (variable)\n"
+          fi
+          
+          if [[ -n "$MISSING" ]]; then
+            echo "ERROR: Missing required configuration for environment '${{ inputs.environment }}':"
+            echo -e "$MISSING"
+            echo ""
+            echo "Please configure these in: Settings > Environments > ${{ inputs.environment }}"
+            exit 1
+          fi
+          
+          echo "All required secrets and variables are configured"
+
+      - name: Checkout repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@a6f90b1f127823b31d4d4a8d96047790581349bd # v0.9.1
+        with:
+          ssh-private-key: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+
+      - name: Verify VPS connection
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          set -e
+          
+          echo "=== Testing SSH connection to VPS ==="
+          
+          if ! ssh $SSH_OPTS deploy@$VPS_HOST "echo 'SSH connection successful'"; then
+            echo "ERROR: Failed to connect to VPS"
+            echo "Please verify:"
+            echo "  - VPS_HOST is correct: $VPS_HOST"
+            echo "  - VPS_PORT is correct"
+            echo "  - VPS_SSH_PRIVATE_KEY matches the deploy user's authorized_keys"
+            echo "  - The VPS is reachable and SSH is running"
+            exit 1
+          fi
+          
+          echo "=== VPS connection verified ==="
+
+      - name: Check if ~/app already exists
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          set -e
+          
+          echo "=== Checking for existing deployment ==="
+          
+          if ssh $SSH_OPTS deploy@$VPS_HOST "[ -d ~/app ]"; then
+            echo "ERROR: ~/app directory already exists on the VPS!"
+            echo ""
+            echo "This workflow is for initial deployment only."
+            echo "To redeploy, you must first remove the existing deployment:"
+            echo ""
+            echo "  ssh deploy@$VPS_HOST 'rm -rf ~/app'"
+            echo ""
+            echo "Or connect to the VPS and manually remove ~/app"
+            exit 1
+          fi
+          
+          echo "No existing deployment found - proceeding"
+
+      - name: Verify Docker is available
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          set -e
+          
+          echo "=== Checking Docker availability ==="
+          
+          # Check Docker is installed
+          if ! ssh $SSH_OPTS deploy@$VPS_HOST "docker --version"; then
+            echo "ERROR: Docker is not installed on the VPS"
+            echo "Please install Docker following the instructions in SETUP_VPS.md"
+            exit 1
+          fi
+          
+          # Check Docker daemon is running and accessible
+          if ! ssh $SSH_OPTS deploy@$VPS_HOST "docker info > /dev/null 2>&1"; then
+            echo "ERROR: Docker daemon is not running or not accessible"
+            echo "Please ensure:"
+            echo "  - Docker daemon is running"
+            echo "  - The deploy user has permission to use Docker"
+            echo "  - If using rootless Docker, it is properly configured"
+            exit 1
+          fi
+          
+          echo "Docker is available and running"
+
+      - name: Upload files via rsync
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          set -e
+          
+          echo "=== Uploading files to VPS ==="
+          
+          # Create app directory on remote
+          ssh $SSH_OPTS deploy@$VPS_HOST "mkdir -p ~/app"
+          
+          # Rsync files to VPS (excluding unnecessary files)
+          rsync -avz --progress \
+            -e "ssh $SSH_OPTS" \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='docs' \
+            --exclude='.env' \
+            ./ deploy@$VPS_HOST:~/app/
+          
+          echo "=== Files uploaded successfully ==="
+
+      - name: Generate environment file
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          set -e
+          
+          echo "=== Generating .env file ==="
+          
+          ssh $SSH_OPTS deploy@$VPS_HOST << 'SCRIPT'
+            set -e
+            cd ~/app
+            
+            chmod +x setup-env.sh
+            ./setup-env.sh --force
+          SCRIPT
+          
+          echo "=== Environment file generated ==="
+
+      - name: Configure environment variables
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          DOMAIN: ${{ vars.DOMAIN }}
+          LETSENCRYPT_EMAIL: ${{ secrets.LETSENCRYPT_EMAIL }}
+        run: |
+          set -e
+          
+          echo "=== Configuring environment variables ==="
+          
+          ssh $SSH_OPTS deploy@$VPS_HOST << SCRIPT
+            set -e
+            cd ~/app
+            
+            # Update DOMAIN and LETSENCRYPT_EMAIL from GitHub configuration
+            sed -i "s|^DOMAIN=.*|DOMAIN=${DOMAIN}|" .env
+            sed -i "s|^LETSENCRYPT_EMAIL=.*|LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL}|" .env
+            
+            # Verify changes were applied
+            if ! grep -q "^DOMAIN=${DOMAIN}\$" .env; then
+              echo "ERROR: Failed to set DOMAIN in .env"
+              exit 1
+            fi
+            
+            if ! grep -q "^LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL}\$" .env; then
+              echo "ERROR: Failed to set LETSENCRYPT_EMAIL in .env"
+              exit 1
+            fi
+            
+            echo "Environment variables configured successfully"
+          SCRIPT
+
+      - name: Pull Docker images
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          set -e
+          
+          echo "=== Pulling Docker images ==="
+          
+          ssh $SSH_OPTS deploy@$VPS_HOST << 'SCRIPT'
+            set -e
+            cd ~/app
+            
+            docker compose pull
+          SCRIPT
+          
+          echo "=== Docker images pulled ==="
+
+      - name: Start services
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          DOMAIN: ${{ vars.DOMAIN }}
+        run: |
+          set -e
+          
+          echo "=== Starting services ==="
+          
+          ssh $SSH_OPTS deploy@$VPS_HOST << 'SCRIPT'
+            set -e
+            cd ~/app
+            
+            docker compose up -d
+            
+            # Wait for services to start
+            sleep 5
+          SCRIPT
+          
+          echo ""
+          echo "=== Deployment complete ==="
+          echo ""
+          
+          # Show service status
+          ssh $SSH_OPTS deploy@$VPS_HOST "cd ~/app && docker compose ps"
+          
+          echo ""
+          echo "Application deployed to: https://${DOMAIN}"
+
