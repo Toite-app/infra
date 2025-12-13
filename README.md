@@ -14,9 +14,21 @@ The infrastructure follows a CI/CD pipeline where:
 4. **VPS** - A single server runs all services via Docker Compose:
    - **Traefik** - Reverse proxy handling routing and TLS certificates
    - **PostgreSQL, Redis, MongoDB** - Data stores
-   - **S3** - Object storage
+   - **MinIO** - S3-compatible object storage
    - **Backend Application** - API server
    - **Internal Frontend** - Admin/internal web application
+
+### Service Startup Order
+
+![Service Startup Order](docs/startup-order.png)
+
+Services start in a specific order based on their dependencies:
+
+1. **postgres-init** - Generates SSL certificates for PostgreSQL, then exits
+2. **PostgreSQL, MongoDB, Redis** - Data stores start in parallel (PostgreSQL waits for certs)
+3. **migrations** - Applies database migrations to PostgreSQL, then exits
+4. **Backend** - Starts after all data stores are healthy and migrations complete
+5. **Internal Frontend** - Starts after backend is running
 
 ## Getting Started
 
