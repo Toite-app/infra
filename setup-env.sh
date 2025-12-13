@@ -107,6 +107,9 @@ JWT_SECRET=$(generate_secret 64)
 COOKIES_SECRET=$(generate_secret 64)
 CSRF_SECRET=$(generate_secret 64)
 
+# Detect Docker socket path for rootless Docker
+DOCKER_SOCK="/run/user/$(id -u)/docker.sock"
+
 echo "Generated random passwords and secrets"
 
 # Substitute values in .env file
@@ -119,6 +122,7 @@ sed -i.bak \
     -e "s|^JWT_SECRET=.*|JWT_SECRET=$JWT_SECRET|" \
     -e "s|^COOKIES_SECRET=.*|COOKIES_SECRET=$COOKIES_SECRET|" \
     -e "s|^CSRF_SECRET=.*|CSRF_SECRET=$CSRF_SECRET|" \
+    -e "s|^DOCKER_SOCK=.*|DOCKER_SOCK=$DOCKER_SOCK|" \
     "$ENV_FILE"
 
 # Remove backup file created by sed
@@ -135,6 +139,7 @@ echo "  - INITIAL_ADMIN_PASSWORD: (24 chars, with symbols)"
 echo "  - JWT_SECRET:             (128 hex chars)"
 echo "  - COOKIES_SECRET:         (128 hex chars)"
 echo "  - CSRF_SECRET:            (128 hex chars)"
+echo "  - DOCKER_SOCK:            $DOCKER_SOCK"
 echo
 echo "Note: The following optional fields are left empty:"
 echo "  - DADATA_API_TOKEN"
