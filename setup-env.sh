@@ -36,6 +36,16 @@ done
 # Generator Functions
 # =============================================================================
 
+# Escape special characters for sed replacement string
+# Characters: \ & | (backslash, ampersand, and our delimiter)
+escape_sed_replacement() {
+    local str="$1"
+    str="${str//\\/\\\\}"  # Escape backslashes first
+    str="${str//&/\\&}"    # Escape ampersands
+    str="${str//|/\\|}"    # Escape the delimiter
+    printf '%s' "$str"
+}
+
 # Generate a random password
 # Usage: generate_password <length> [--symbols]
 generate_password() {
@@ -100,7 +110,7 @@ POSTGRES_PASSWORD=$(generate_password 24)
 REDIS_PASSWORD=$(generate_password 24)
 
 # Generate admin password (24 chars, with symbols)
-INITIAL_ADMIN_PASSWORD=$(generate_password 24 --symbols)
+INITIAL_ADMIN_PASSWORD=$(generate_password 24)
 
 # Generate secrets (64 bytes = 128 hex chars)
 JWT_SECRET=$(generate_secret 64)
@@ -112,13 +122,16 @@ DOCKER_SOCK="/run/user/$(id -u)/docker.sock"
 
 echo "Generated random passwords and secrets"
 
+# Escape special sed characters in password with symbols
+INITIAL_ADMIN_PASSWORD_ESCAPED=$(escape_sed_replacement "$INITIAL_ADMIN_PASSWORD")
+
 # Substitute values in .env file
 # Using | as delimiter since passwords might contain special chars
 sed -i.bak \
     -e "s|^MONGO_PASSWORD=.*|MONGO_PASSWORD=$MONGO_PASSWORD|" \
     -e "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$POSTGRES_PASSWORD|" \
     -e "s|^REDIS_PASSWORD=.*|REDIS_PASSWORD=$REDIS_PASSWORD|" \
-    -e "s|^INITIAL_ADMIN_PASSWORD=.*|INITIAL_ADMIN_PASSWORD=$INITIAL_ADMIN_PASSWORD|" \
+    -e "s|^INITIAL_ADMIN_PASSWORD=.*|INITIAL_ADMIN_PASSWORD=$INITIAL_ADMIN_PASSWORD_ESCAPED|" \
     -e "s|^JWT_SECRET=.*|JWT_SECRET=$JWT_SECRET|" \
     -e "s|^COOKIES_SECRET=.*|COOKIES_SECRET=$COOKIES_SECRET|" \
     -e "s|^CSRF_SECRET=.*|CSRF_SECRET=$CSRF_SECRET|" \
