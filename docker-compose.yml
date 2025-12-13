@@ -3,7 +3,7 @@ name: toite
 services:
   # Traefik reverse proxy
   traefik:
-    image: traefik:v3.2
+    image: traefik:3.6.4
     container_name: toite-traefik
     restart: unless-stopped
     command:
