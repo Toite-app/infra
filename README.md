@@ -107,7 +107,29 @@ After initial deployment, use the **Pull & Restart Infrastructure** workflow to 
 
 > **Note:** This workflow only updates application services. Infrastructure services (Traefik, PostgreSQL, MongoDB, Redis, MinIO) are not affected. The `.env` file and data volumes are preserved.
 
-### 5. Manual Deployment (without CI/CD)
+### 5. Seed Database (dev/demo only)
+
+Use the **Seed Database** workflow to reset databases and populate them with seed data. This is useful for testing or resetting non-production environments.
+
+> **Warning:** This is a destructive operation that deletes all data in PostgreSQL, MongoDB, and Redis!
+
+1. Go to **Actions > Seed Database**
+2. Click **Run workflow**
+3. Select the target environment (`dev` or `demo`)
+4. Type `SEED` in the confirmation field
+5. Click **Run workflow** to start seeding
+
+**What the seeding does:**
+
+1. Pulls the latest `toite/seeder:latest` image
+2. Stops all services and removes database volumes (PostgreSQL, MongoDB, Redis)
+3. Starts PostgreSQL and waits for it to be healthy
+4. Runs the seeder container to populate the database
+5. Starts all services
+
+> **Note:** This workflow is not available for production. Let's Encrypt certificates and MinIO data are preserved.
+
+### 6. Manual Deployment (without CI/CD)
 
 If you prefer to deploy manually without GitHub Actions:
 
