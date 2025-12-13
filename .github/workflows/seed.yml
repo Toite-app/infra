@@ -1,0 +1,174 @@
+# Seed Database Pipeline
+#
+# This workflow connects to a VPS and runs seed-database.sh to reset and seed databases
+# It is triggered manually via workflow_dispatch with environment selection
+#
+# WARNING: This is a destructive operation that deletes all database data!
+#
+# Prerequisites:
+#   - Initial deployment must be completed via deploy.yml (~/app must exist)
+#
+# Required GitHub Configuration (per environment):
+#   Secrets:
+#     - VPS_SSH_PRIVATE_KEY: SSH private key for deploy user
+#     - VPS_HOST: VPS IP address or hostname
+#     - VPS_PORT: SSH port number
+
+name: Seed Database
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - dev
+          - demo
+      confirm:
+        description: 'Type SEED to confirm (this deletes all database data!)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# Prevent simultaneous operations on the same environment
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  seed:
+    name: Seed ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+
+    environment:
+      name: ${{ inputs.environment }}
+
+    env:
+      SSH_OPTS: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p ${{ secrets.VPS_PORT }}"
+
+    steps:
+      - name: Validate confirmation
+        run: |
+          if [[ "${{ inputs.confirm }}" != "SEED" ]]; then
+            echo "ERROR: Confirmation failed!"
+            echo "You must type 'SEED' to confirm this destructive operation."
+            exit 1
+          fi
+          echo "Confirmation validated"
+
+      - name: Validate required secrets
+        run: |
+          set -e
+          
+          echo "=== Validating required configuration ==="
+          
+          MISSING=""
+          
+          if [[ -z "${{ secrets.VPS_HOST }}" ]]; then
+            MISSING="${MISSING}  - VPS_HOST (secret)\n"
+          fi
+          
+          if [[ -z "${{ secrets.VPS_PORT }}" ]]; then
+            MISSING="${MISSING}  - VPS_PORT (secret)\n"
+          fi
+          
+          if [[ -z "${{ secrets.VPS_SSH_PRIVATE_KEY }}" ]]; then
+            MISSING="${MISSING}  - VPS_SSH_PRIVATE_KEY (secret)\n"
+          fi
+          
+          if [[ -n "$MISSING" ]]; then
+            echo "ERROR: Missing required configuration for environment '${{ inputs.environment }}':"
+            echo -e "$MISSING"
+            echo ""
+            echo "Please configure these in: Settings > Environments > ${{ inputs.environment }}"
+            exit 1
+          fi
+          
+          echo "All required secrets are configured"
+
+      - name: Checkout repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@a6f90b1f127823b31d4d4a8d96047790581349bd # v0.9.1
+        with:
+          ssh-private-key: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+
+      - name: Verify VPS connection
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          set -e
+          
+          echo "=== Testing SSH connection to VPS ==="
+          
+          if ! ssh $SSH_OPTS deploy@$VPS_HOST "echo 'SSH connection successful'"; then
+            echo "ERROR: Failed to connect to VPS"
+            exit 1
+          fi
+          
+          echo "=== VPS connection verified ==="
+
+      - name: Check if ~/app exists
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          set -e
+          
+          echo "=== Checking for existing deployment ==="
+          
+          if ! ssh $SSH_OPTS deploy@$VPS_HOST "[ -d ~/app ]"; then
+            echo "ERROR: ~/app directory does not exist on the VPS!"
+            echo ""
+            echo "This workflow requires an existing deployment."
+            echo "Please run the Deploy workflow first."
+            exit 1
+          fi
+          
+          echo "Existing deployment found - proceeding"
+
+      - name: Upload seed-database.sh
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          set -e
+          
+          echo "=== Uploading seed-database.sh ==="
+          
+          rsync -avz --progress \
+            -e "ssh $SSH_OPTS" \
+            ./seed-database.sh deploy@$VPS_HOST:~/app/
+          
+          ssh $SSH_OPTS deploy@$VPS_HOST "chmod +x ~/app/seed-database.sh"
+          
+          echo "=== Script uploaded ==="
+
+      - name: Run seed script
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          set -e
+          
+          echo "=== Running seed-database.sh ==="
+          
+          ssh $SSH_OPTS deploy@$VPS_HOST << 'SCRIPT'
+            set -e
+            cd ~/app
+            ./seed-database.sh
+          SCRIPT
+          
+          echo "=== Seeding complete ==="
+
+      - name: Show service status
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          echo ""
+          echo "=== Seed complete ==="
+          echo ""
+          
+          ssh $SSH_OPTS deploy@$VPS_HOST "cd ~/app && docker compose ps"
